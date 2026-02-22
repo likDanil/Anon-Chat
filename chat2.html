@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Anon Chat</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        :root {
+            --tg-bg: #0e1621;
+            --tg-panel: #17212b;
+            --tg-accent: #2aabee;
+            --tg-accent-hover: #229ed9;
+            --tg-text: #f5f5f5;
+            --tg-secondary: #6ab2f2;
+            --tg-msg-out: #2b5278;
+            --tg-msg-in: #18233d;
+            --tg-border: #242f3d;
+            --safe-top: env(safe-area-inset-top);
+            --safe-bottom: env(safe-area-inset-bottom);
+        }
+        * { box-sizing: border-box; }
+        html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; }
+        body {
+            background: var(--tg-bg);
+            color: var(--tg-text);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+            -webkit-font-smoothing: antialiased;
+        }
+        #login-screen {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            min-height: 100dvh;
+            padding: 20px;
+            padding-top: max(20px, var(--safe-top));
+            padding-bottom: max(20px, var(--safe-bottom));
+        }
+        #login-screen h2 { margin: 0 0 24px; font-size: 1.5rem; font-weight: 500; }
+        .login-form {
+            width: 100%;
+            max-width: 400px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        input {
+            width: 100%;
+            padding: 14px 16px;
+            background: var(--tg-panel);
+            border: 1px solid var(--tg-border);
+            color: var(--tg-text);
+            border-radius: 12px;
+            font-size: 16px;
+            outline: none;
+        }
+        input::placeholder { color: #708499; }
+        input:focus { border-color: var(--tg-accent); }
+        button {
+            width: 100%;
+            padding: 14px;
+            background: var(--tg-accent);
+            color: #fff;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        button:hover { background: var(--tg-accent-hover); }
+        button:active { opacity: 0.9; }
+
+        #chat-screen {
+            display: none;
+            flex-direction: column;
+            width: 100%;
+            height: 100vh;
+            height: 100dvh;
+            max-height: 100vh;
+            max-height: 100dvh;
+        }
+        .header {
+            flex-shrink: 0;
+            padding: 12px 16px;
+            padding-top: max(12px, var(--safe-top));
+            background: var(--tg-panel);
+            border-bottom: 1px solid var(--tg-border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            min-height: 52px;
+        }
+        .header span:first-child { font-weight: 500; font-size: 15px; }
+        .header-right { display: flex; align-items: center; gap: 12px; }
+        #online-btn {
+            font-size: 12px; color: var(--tg-secondary); cursor: pointer;
+            padding: 4px 8px; border-radius: 6px; user-select: none;
+        }
+        #online-btn:hover { background: var(--tg-border); }
+        #online-dropdown {
+            display: none; position: absolute; top: 100%; right: 0; margin-top: 4px;
+            background: var(--tg-panel); border: 1px solid var(--tg-border);
+            border-radius: 8px; padding: 8px; min-width: 140px; z-index: 100;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+        #online-dropdown.show { display: block; }
+        #online-dropdown .online-title { font-size: 11px; color: #708499; margin-bottom: 6px; }
+        #online-dropdown .online-item { padding: 4px 0; font-size: 13px; }
+        .header-wrap { position: relative; }
+        #conn-status { font-size: 12px; color: #708499; }
+        #conn-status.online { color: var(--tg-accent); }
+        #conn-status.offline { color: #e74c3c; }
+        #conn-status.waiting { color: #f39c12; }
+
+        #messages {
+            flex: 1;
+            overflow-y: auto;
+            overflow-x: hidden;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            overscroll-behavior: contain;
+            scrollbar-width: thin;
+            scrollbar-color: var(--tg-border) transparent;
+        }
+        #messages::-webkit-scrollbar { width: 6px; }
+        #messages::-webkit-scrollbar-track { background: transparent; }
+        #messages::-webkit-scrollbar-thumb { background: var(--tg-border); border-radius: 3px; }
+        #messages::-webkit-scrollbar-thumb:hover { background: #3d4f5f; }
+        .msg-item {
+            padding: 8px 12px;
+            border-radius: 12px;
+            max-width: 85%;
+            word-wrap: break-word;
+            line-height: 1.4;
+            font-size: 15px;
+        }
+        .msg-item.out {
+            align-self: flex-end;
+            background: var(--tg-msg-out);
+            border-bottom-right-radius: 4px;
+        }
+        .msg-item.in {
+            align-self: flex-start;
+            background: var(--tg-msg-in);
+            border-bottom-left-radius: 4px;
+        }
+        .msg-item img { max-width: 100%; max-height: 280px; display: block; border-radius: 8px; }
+        .msg-item.msg-img { padding: 4px; }
+        .img-btn {
+            width: 44px; height: 44px; min-width: 44px; padding: 0;
+            border-radius: 50%; background: transparent; border: none;
+            cursor: pointer; display: flex; align-items: center; justify-content: center;
+            color: var(--tg-secondary); font-size: 22px;
+        }
+        .img-btn:hover, .mic-btn:hover { background: var(--tg-border); color: var(--tg-accent); }
+        .mic-btn.recording { background: #e74c3c; color: #fff; animation: pulse 1s infinite; }
+        @keyframes pulse { 50% { opacity: 0.8; } }
+        #fileInput { display: none; }
+        .msg-item audio { max-width: 220px; height: 36px; }
+        .msg-item.msg-voice { padding: 8px 12px; }
+        .input-area {
+            flex-shrink: 0;
+            padding: 12px 16px;
+            padding-bottom: max(12px, var(--safe-bottom));
+            background: var(--tg-panel);
+            border-top: 1px solid var(--tg-border);
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+        #msgInput {
+            margin: 0;
+            flex: 1;
+            min-width: 0;
+            padding: 12px 16px;
+            background: var(--tg-bg);
+            border: 1px solid var(--tg-border);
+            border-radius: 24px;
+            font-size: 15px;
+        }
+        .send-btn {
+            width: 44px;
+            height: 44px;
+            min-width: 44px;
+            padding: 0;
+            border-radius: 50%;
+            background: var(--tg-accent);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .send-btn:hover { background: var(--tg-accent-hover); }
+
+        @media (min-width: 600px) {
+            .msg-item { max-width: 65%; }
+        }
+    </style>
+</head>
+<body>
+
+<div id="login-screen">
+    <h2>🔐 Anon Chat</h2>
+    <div class="login-form">
+        <input type="text" id="userName" placeholder="Ваше имя">
+        <input type="password" id="seedPhrase" placeholder="Сид-фраза (один на двоих)">
+        <div id="roomCodeWrap"><input type="text" id="roomCode" placeholder="Код чата (один на двоих)"></div>
+        <button onclick="enterChat()">Войти в чат</button>
+    </div>
+</div>
+
+<div id="chat-screen">
+    <div class="header">
+        <span id="display-name" style="font-weight: bold;"></span>
+        <div class="header-right header-wrap">
+            <span id="online-btn" onclick="toggleOnlineList()">0 в сети ▼</span>
+            <div id="online-dropdown">
+                <div class="online-title">Сейчас в чате</div>
+                <div id="online-list"></div>
+            </div>
+            <span id="conn-status" class="waiting">● поиск...</span>
+        </div>
+    </div>
+    <div id="messages"></div>
+    <div class="input-area">
+        <input type="file" id="fileInput" accept="image/*" onchange="onImageSelected(event)">
+        <button type="button" class="img-btn" onclick="document.getElementById('fileInput').click()" title="Фото">📷</button>
+        <button type="button" class="img-btn mic-btn" id="micBtn" onclick="toggleVoice()" title="Голос">🎤</button>
+        <input type="text" id="msgInput" placeholder="Сообщение..." autocomplete="off">
+        <button class="send-btn" onclick="sendMessage()">➤</button>
+    </div>
+</div>
+
+<script>
+    let currentUser = '', currentSeed = '', peer = null, conn = null, lastSentEncrypted = null;
+    const STORAGE_KEY = 'anon_chat_messages';
+    let presenceTimer = null;
+    let viaTunnel = false;
+
+    function updateOnlineBtn(count, list) {
+        const btn = document.getElementById('online-btn');
+        const div = document.getElementById('online-list');
+        btn.textContent = count + ' в сети ▼';
+        div.innerHTML = (list || []).map(n => `<div class="online-item">${escapeHtml(n)}</div>`).join('') || '<div class="online-item" style="color:#708499">Нет данных</div>';
+    }
+    function toggleOnlineList() {
+        const dd = document.getElementById('online-dropdown');
+        dd.classList.toggle('show');
+        if (dd.classList.contains('show')) {
+            if (viaTunnel) fetch('/presence').then(r => r.json()).then(d => { updateOnlineBtn(d.users.length, d.users); });
+            document.addEventListener('click', closeOnlineList);
+        }
+    }
+    function closeOnlineList(e) {
+        if (!e.target.closest('.header-wrap')) {
+            document.getElementById('online-dropdown').classList.remove('show');
+            document.removeEventListener('click', closeOnlineList);
+        }
+    }
+
+    (function() {
+        const vt = location.hostname !== 'localhost' && location.hostname !== '127.0.0.1';
+        if (vt) document.getElementById('roomCodeWrap').style.display = 'none';
+    })();
+    window.addEventListener('beforeunload', () => { if (presenceTimer) clearInterval(presenceTimer); });
+
+    function enterChat() {
+        currentUser = document.getElementById('userName').value.trim();
+        currentSeed = document.getElementById('seedPhrase').value.trim();
+        const code = document.getElementById('roomCode').value.trim().toLowerCase().replace(/\s/g, '') || 'default';
+        if (!currentUser || !currentSeed) return alert("Имя и сид-фраза обязательны!");
+
+        document.getElementById('login-screen').style.display = 'none';
+        document.getElementById('chat-screen').style.display = 'flex';
+        document.getElementById('display-name').innerText = currentUser;
+
+        loadLocalMessages();
+        viaTunnel = location.hostname !== 'localhost' && location.hostname !== '127.0.0.1';
+        if (viaTunnel) connectPoll();
+        else connectP2P(code);
+    }
+
+    function parseDecrypted(txt) {
+        try {
+            const j = JSON.parse(txt);
+            if (j && j.t === 'img' && j.u && j.b) return { type: 'img', user: j.u, data: j.b };
+            if (j && j.t === 'voice' && j.u && j.b) return { type: 'voice', user: j.u, data: j.b, mime: j.m || 'audio/webm' };
+        } catch (e) {}
+        return { type: 'txt', text: txt };
+    }
+    function isOutMsg(parsed) {
+        if (parsed.type === 'img' || parsed.type === 'voice') return parsed.user === currentUser;
+        return parsed.text.startsWith(currentUser + ':');
+    }
+    function renderContent(parsed) {
+        if (parsed.type === 'img') return `<img src="data:image/jpeg;base64,${parsed.data}" alt="фото">`;
+        if (parsed.type === 'voice') return `<audio controls preload="metadata" src="data:${parsed.mime};base64,${parsed.data}"></audio>`;
+        return escapeHtml(parsed.text);
+    }
+
+    function loadLocalMessages() {
+        try {
+            const raw = localStorage.getItem(STORAGE_KEY);
+            if (!raw) return;
+            let list = JSON.parse(raw);
+            const origLen = list.length;
+            const seen = new Set();
+            list = list.filter(m => {
+                if (seen.has(m)) return false;
+                seen.add(m);
+                return true;
+            });
+            if (list.length !== origLen) localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+            const msgDiv = document.getElementById('messages');
+            list.forEach(m => {
+                try {
+                    const bytes = CryptoJS.AES.decrypt(m, currentSeed);
+                    const txt = bytes.toString(CryptoJS.enc.Utf8);
+                    if (txt) {
+                        const p = parseDecrypted(txt);
+                        const out = isOutMsg(p);
+                        const cls = (p.type === 'img' ? ' msg-img' : '') + (p.type === 'voice' ? ' msg-voice' : '');
+                        msgDiv.innerHTML += `<div class="msg-item ${out ? 'out' : 'in'}${cls}">${renderContent(p)}</div>`;
+                    }
+                } catch (e) {}
+            });
+            msgDiv.scrollTop = msgDiv.scrollHeight;
+        } catch (e) {}
+    }
+
+    function saveMessageLocal(encrypted) {
+        try {
+            const raw = localStorage.getItem(STORAGE_KEY) || '[]';
+            const list = JSON.parse(raw);
+            if (list.includes(encrypted)) return;
+            list.push(encrypted);
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+        } catch (e) {}
+    }
+
+    function escapeHtml(s) {
+        const d = document.createElement('div');
+        d.textContent = s;
+        return d.innerHTML;
+    }
+
+    function connectPoll() {
+        const statusEl = document.getElementById('conn-status');
+        conn = { poll: true };
+        statusEl.textContent = '● онлайн';
+        statusEl.className = 'online';
+
+        function sendPresence() {
+            fetch('/presence', { method: 'POST', body: JSON.stringify({ name: currentUser }), headers: { 'Content-Type': 'application/json' } });
+        }
+        sendPresence();
+        presenceTimer = setInterval(sendPresence, 10000);
+
+        function refreshOnline() {
+            fetch('/presence').then(r => r.json()).then(d => { updateOnlineBtn(d.users.length, d.users); });
+        }
+        refreshOnline();
+        setInterval(refreshOnline, 8000);
+
+        function poll(last) {
+            if (!conn || !conn.poll) return;
+            fetch(`/poll?last=${last || 0}`).then(r => r.json()).then(d => {
+                d.messages.forEach(m => {
+                    if (m === lastSentEncrypted) { lastSentEncrypted = null; return; }
+                    try {
+                        const raw = localStorage.getItem(STORAGE_KEY) || '[]';
+                        if (JSON.parse(raw).includes(m)) return;
+                        const bytes = CryptoJS.AES.decrypt(m, currentSeed);
+                        const txt = bytes.toString(CryptoJS.enc.Utf8);
+                        if (txt) { appendMsg(txt); saveMessageLocal(m); }
+                    } catch (e) {}
+                });
+                if (conn && conn.poll) setTimeout(() => poll(d.next), 2000);
+            }).catch(() => {
+                statusEl.textContent = '● офлайн'; statusEl.className = 'offline';
+                if (conn && conn.poll) setTimeout(() => poll(last), 3000);
+            });
+        }
+        poll(0);
+    }
+
+    function connectP2P(roomCode) {
+        const statusEl = document.getElementById('conn-status');
+        const roomId = 'room-' + roomCode;
+
+        /* Google STUN (обход NAT) + freeTURN (relay когда P2P блокируется) */
+        const iceServers = [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' },
+                { urls: 'stun:stun2.l.google.com:19302' },
+                { urls: 'stun:stun3.l.google.com:19302' },
+                { urls: 'stun:stun4.l.google.com:19302' },
+                { urls: 'turn:freeturn.net:3478', username: 'free', credential: 'free' },
+                { urls: 'turns:freeturn.net:5349', username: 'free', credential: 'free' }
+            ];
+
+        function tryAsHost() {
+            peer = new Peer(roomId, {
+                host: '0.peerjs.com', secure: true, path: '/',
+                config: { iceServers }
+            });
+            peer.on('open', () => {
+                statusEl.textContent = '● ожидание... (друг зайди с тем же кодом)';
+                statusEl.className = 'waiting';
+                updateOnlineBtn(0, []);
+            });
+            peer.on('connection', setupConnection);
+            peer.on('error', (err) => {
+                if (err.type === 'server-error' || err.message.includes('taken')) {
+                    tryAsClient();
+                } else {
+                    statusEl.textContent = '● офлайн'; statusEl.className = 'offline';
+                    updateOnlineBtn(0, []);
+                }
+            });
+        }
+
+        function tryAsClient() {
+            peer = new Peer({
+                host: '0.peerjs.com', secure: true, path: '/',
+                config: { iceServers }
+            });
+            peer.on('open', () => {
+                statusEl.textContent = '● подключение...';
+                statusEl.className = 'waiting';
+                const c = peer.connect(roomId);
+                c.on('open', () => { conn = c; setupConnection(c); });
+                c.on('error', () => { statusEl.textContent = '● ожидание...'; statusEl.className = 'waiting'; });
+            });
+            peer.on('connection', setupConnection);
+            peer.on('error', () => { statusEl.textContent = '● офлайн'; statusEl.className = 'offline'; updateOnlineBtn(0, []); });
+        }
+
+        function setupConnection(c) {
+            conn = c;
+            conn.on('data', (data) => {
+                try {
+                    const bytes = CryptoJS.AES.decrypt(data, currentSeed);
+                    const txt = bytes.toString(CryptoJS.enc.Utf8);
+                    if (txt) { appendMsg(txt); saveMessageLocal(data); }
+                } catch (e) {}
+            });
+            conn.on('close', () => { conn = null; statusEl.textContent = '● офлайн'; statusEl.className = 'offline'; updateOnlineBtn(0, []); });
+            conn.on('error', () => {});
+            statusEl.textContent = '● онлайн'; statusEl.className = 'online';
+            updateOnlineBtn(1, ['Собеседник']);
+        }
+
+        tryAsHost();
+    }
+
+    function appendMsg(payload) {
+        const msgDiv = document.getElementById('messages');
+        const p = typeof payload === 'string' ? parseDecrypted(payload) : payload;
+        const out = isOutMsg(p);
+        const cls = (p.type === 'img' ? ' msg-img' : '') + (p.type === 'voice' ? ' msg-voice' : '');
+        msgDiv.innerHTML += `<div class="msg-item ${out ? 'out' : 'in'}${cls}">${renderContent(p)}</div>`;
+        msgDiv.scrollTop = msgDiv.scrollHeight;
+    }
+
+    document.getElementById('msgInput').addEventListener('keypress', e => { if (e.key === 'Enter') sendMessage(); });
+
+    const MAX_IMG = 400000;
+    function compressImage(file, cb) {
+        const img = new Image();
+        img.onload = () => {
+            const c = document.createElement('canvas');
+            const max = 800;
+            let w = img.width, h = img.height;
+            if (w > max || h > max) {
+                if (w > h) { h = (h * max) / w; w = max; } else { w = (w * max) / h; h = max; }
+            }
+            c.width = w; c.height = h;
+            c.getContext('2d').drawImage(img, 0, 0, w, h);
+            let q = 0.75, data;
+            do {
+                data = c.toDataURL('image/jpeg', q).split(',')[1];
+                q -= 0.1;
+            } while (data && data.length > MAX_IMG && q > 0.3);
+            URL.revokeObjectURL(img.src);
+            cb(data && data.length <= MAX_IMG ? data : null);
+        };
+        img.onerror = () => { URL.revokeObjectURL(img.src); cb(null); };
+        img.src = URL.createObjectURL(file);
+    }
+    function onImageSelected(ev) {
+        const f = ev.target.files?.[0];
+        ev.target.value = '';
+        if (!f || !f.type.startsWith('image/')) return;
+        compressImage(f, (base64) => {
+            if (!base64) { alert('Картинка слишком большая или не читается'); return; }
+            const payload = JSON.stringify({ t: 'img', u: currentUser, b: base64 });
+            const encrypted = CryptoJS.AES.encrypt(payload, currentSeed).toString();
+            saveMessageLocal(encrypted);
+            appendMsg(payload);
+            if (conn) {
+                if (conn.poll) {
+                    lastSentEncrypted = encrypted;
+                    fetch('/msg', { method: 'POST', body: encrypted, headers: { 'Content-Type': 'text/plain' } });
+                } else if (conn.open) conn.send(encrypted);
+            }
+        });
+    }
+
+    const MAX_VOICE = 300000;
+    const MAX_VOICE_SEC = 60;
+    let mediaRec = null;
+    let voiceStream = null;
+    let voiceChunks = [];
+
+    function toggleVoice() {
+        const btn = document.getElementById('micBtn');
+        if (mediaRec && mediaRec.state === 'recording') {
+            mediaRec.stop();
+            return;
+        }
+        navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+            voiceStream = stream;
+            const opts = { mimeType: MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm' };
+            mediaRec = new MediaRecorder(stream);
+            voiceChunks = [];
+            let startTime = Date.now();
+            mediaRec.ondataavailable = (e) => { if (e.data.size) voiceChunks.push(e.data); };
+            const sizeCheck = setInterval(() => {
+                const total = voiceChunks.reduce((s, c) => s + c.size, 0);
+                if (mediaRec && mediaRec.state === 'recording' && total >= MAX_VOICE) {
+                    clearInterval(sizeCheck); mediaRec.stop();
+                }
+            }, 500);
+            mediaRec.onstop = () => {
+                clearInterval(sizeCheck);
+                stream.getTracks().forEach(t => t.stop());
+                voiceStream = null;
+                btn.classList.remove('recording');
+                if (voiceChunks.length === 0) return;
+                const blob = new Blob(voiceChunks, { type: opts.mimeType });
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                    const base64 = reader.result.split(',')[1];
+                    const payload = JSON.stringify({ t: 'voice', u: currentUser, b: base64 || '', m: opts.mimeType });
+                    const encrypted = CryptoJS.AES.encrypt(payload, currentSeed).toString();
+                    saveMessageLocal(encrypted);
+                    appendMsg(payload);
+                    if (conn) {
+                        if (conn.poll) {
+                            lastSentEncrypted = encrypted;
+                            fetch('/msg', { method: 'POST', body: encrypted, headers: { 'Content-Type': 'text/plain' } });
+                        } else if (conn.open) conn.send(encrypted);
+                    }
+                };
+                reader.readAsDataURL(blob);
+            };
+            mediaRec.start();
+            btn.classList.add('recording');
+            setTimeout(() => {
+                if (mediaRec && mediaRec.state === 'recording' && (Date.now() - startTime) >= MAX_VOICE_SEC * 1000) mediaRec.stop();
+            }, MAX_VOICE_SEC * 1000);
+        }).catch(() => alert('Доступ к микрофону запрещён'));
+    }
+
+    function sendMessage() {
+        const input = document.getElementById('msgInput');
+        const text = input.value.trim();
+        if (!text) return;
+
+        const full = `${currentUser}: ${text}`;
+        const encrypted = CryptoJS.AES.encrypt(full, currentSeed).toString();
+        input.value = '';
+
+        saveMessageLocal(encrypted);
+        appendMsg(full);
+
+        if (conn) {
+            if (conn.poll) {
+                lastSentEncrypted = encrypted;
+                fetch('/msg', { method: 'POST', body: encrypted, headers: { 'Content-Type': 'text/plain' } });
+            } else if (conn instanceof WebSocket && conn.readyState === WebSocket.OPEN) {
+                conn.send(encrypted);
+            } else if (conn.open) conn.send(encrypted);
+        }
+    }
+</script>
+
+</body>
+</html>
