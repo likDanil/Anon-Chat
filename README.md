@@ -23,7 +23,7 @@
 
 ```bash
 git clone https://github.com/likDanil/Anon-Chat.git
-cd anon-chat
+cd Anon-Chat
 npm install
 ```
 
